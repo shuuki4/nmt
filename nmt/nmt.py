@@ -32,6 +32,7 @@ from .utils import misc_utils as utils
 from .utils import vocab_utils
 
 utils.check_tensorflow_version()
+tf.logging.set_verbosity(tf.logging.ERROR)
 
 FLAGS = None
 

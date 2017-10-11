@@ -102,8 +102,9 @@ class BaseModel(object):
               self.iterator.target_sequence_length)
     elif self.mode == tf.contrib.learn.ModeKeys.EVAL:
       self.eval_loss = res[1]
+      self.target_crossent = res[2]
     elif self.mode == tf.contrib.learn.ModeKeys.INFER:
-      self.infer_logits, _, self.final_context_state, self.sample_id = res
+      self.infer_logits, _, _, self.final_context_state, self.sample_id = res
       self.sample_words = reverse_target_vocab_table.lookup(
           tf.to_int64(self.sample_id))
 
@@ -200,6 +201,13 @@ class BaseModel(object):
                      self.predict_count,
                      self.batch_size])
 
+  def eval_pp(self, sess):
+    assert self.mode == tf.contrib.learn.ModeKeys.EVAL
+    return sess.run([self.target_crossent,
+                     self.eval_loss,
+                     self.predict_count,
+                     self.batch_size])
+
   def build_graph(self, hparams, scope=None):
     """Subclass must implement this method.
 
@@ -236,11 +244,11 @@ class BaseModel(object):
       ## Loss
       if self.mode != tf.contrib.learn.ModeKeys.INFER:
         with tf.device(model_helper.get_device_str(num_layers - 1, num_gpus)):
-          loss = self._compute_loss(logits)
+          loss, target_crossent = self._compute_loss(logits)
       else:
-        loss = None
+        loss, target_crossent = None, None
 
-      return logits, loss, final_context_state, sample_id
+      return logits, loss, target_crossent, final_context_state, sample_id
 
   @abc.abstractmethod
   def _build_encoder(self, hparams):
@@ -389,7 +397,7 @@ class BaseModel(object):
             scope=decoder_scope)
 
         if beam_width > 0:
-          logits = tf.no_op()
+          logits = outputs.beam_search_decoder_output.scores
           sample_id = outputs.predicted_ids
         else:
           logits = outputs.rnn_output
@@ -431,9 +439,9 @@ class BaseModel(object):
     if self.time_major:
       target_weights = tf.transpose(target_weights)
 
-    loss = tf.reduce_sum(
-        crossent * target_weights) / tf.to_float(self.batch_size)
-    return loss
+    target_crossent = crossent * target_weights
+    loss = tf.reduce_sum(target_crossent) / tf.to_float(self.batch_size)
+    return loss, target_crossent
 
   def _get_infer_summary(self, hparams):
     return tf.no_op()

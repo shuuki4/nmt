@@ -107,6 +107,14 @@ class EvalModel(
   pass
 
 
+class CustomEvalModel(
+    collections.namedtuple("CustomEvalModel",
+                           ("graph", "model",
+                            "src_placeholder", "tgt_placeholder",
+                            "batch_size_placeholder", "iterator"))):
+  pass
+
+
 def create_eval_model(model_creator, hparams, scope=None, single_cell_fn=None):
   """Create train graph, model, src/tgt file holders, and iterator."""
   src_vocab_file = hparams.src_vocab_file
@@ -147,6 +155,55 @@ def create_eval_model(model_creator, hparams, scope=None, single_cell_fn=None):
       src_file_placeholder=src_file_placeholder,
       tgt_file_placeholder=tgt_file_placeholder,
       iterator=iterator)
+
+
+def create_custom_eval_model(model_creator, hparams,
+                             scope=None, single_cell_fn=None):
+    graph = tf.Graph()
+    src_vocab_file = hparams.src_vocab_file
+    tgt_vocab_file = hparams.tgt_vocab_file
+
+    with graph.as_default():
+      src_vocab_table, tgt_vocab_table = vocab_utils.create_vocab_tables(
+        src_vocab_file, tgt_vocab_file, hparams.share_vocab)
+      src_placeholder = tf.placeholder(shape=[None], dtype=tf.string)
+      tgt_placeholder = tf.placeholder(shape=[None], dtype=tf.string)
+      batch_size_placeholder = tf.placeholder(shape=tuple(), dtype=tf.int64)
+
+      src_dataset = tf.contrib.data.Dataset.from_tensor_slices(
+          src_placeholder)
+      tgt_dataset = tf.contrib.data.Dataset.from_tensor_slices(
+          tgt_placeholder)
+      iterator = iterator_utils.get_iterator(
+          src_dataset,
+          tgt_dataset,
+          src_vocab_table,
+          tgt_vocab_table,
+          batch_size_placeholder,
+          sos=hparams.sos,
+          eos=hparams.eos,
+          source_reverse=hparams.source_reverse,
+          random_seed=hparams.random_seed,
+          num_buckets=1,
+          src_max_len=hparams.src_max_len_infer,
+          tgt_max_len=hparams.tgt_max_len_infer,
+          shuffle=False
+      )
+      model = model_creator(
+          hparams,
+          iterator=iterator,
+          mode=tf.contrib.learn.ModeKeys.EVAL,
+          source_vocab_table=src_vocab_table,
+          target_vocab_table=tgt_vocab_table,
+          scope=scope,
+          single_cell_fn=single_cell_fn)
+    return CustomEvalModel(
+        graph=graph,
+        model=model,
+        src_placeholder=src_placeholder,
+        tgt_placeholder=tgt_placeholder,
+        batch_size_placeholder=batch_size_placeholder,
+        iterator=iterator)
 
 
 def run_sample_decode(infer_model, infer_sess, model_dir, hparams,
@@ -421,9 +478,11 @@ def train(hparams, scope=None, target_session="", single_cell_fn=None):
           global_step=global_step)
 
       # Evaluate on dev/test
-      run_sample_decode(infer_model, infer_sess,
-                        model_dir, hparams, summary_writer, sample_src_data,
-                        sample_tgt_data)
+      # 5 times
+      for _ in range(5):
+          run_sample_decode(infer_model, infer_sess,
+                            model_dir, hparams, summary_writer, sample_src_data,
+                            sample_tgt_data)
       dev_ppl, test_ppl = run_internal_eval(
           eval_model, eval_sess, model_dir, hparams, summary_writer)
 
